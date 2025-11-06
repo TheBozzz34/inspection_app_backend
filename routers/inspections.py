@@ -4,6 +4,15 @@ from typing import List
 from .. import models, schemas, auth
 from ..auth import get_db, require_role, get_current_user
 from datetime import datetime
+from ..models import InspectionComment, Inspection
+from fastapi.responses import StreamingResponse
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet
+import requests
+import tempfile
 
 router = APIRouter(prefix="/inspections", tags=["inspections"])
 
@@ -113,3 +122,193 @@ def complete_inspection(inspection_id: int, db: Session = Depends(get_db), curre
     db.commit()
     db.refresh(insp)
     return {"detail": "completed", "inspection_id": insp.id}
+
+@router.post("/{inspection_id}/comments", response_model=schemas.InspectionCommentResponse)
+def add_comment(
+    inspection_id: int,
+    comment: schemas.InspectionCommentCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    new_comment = InspectionComment(
+        inspection_id=inspection_id,
+        user_id=current_user.id,
+        action=comment.action,
+        message=comment.message,
+    )
+
+    db.add(new_comment)
+    db.commit()
+    db.refresh(new_comment)
+
+    return {
+        "id": new_comment.id,
+        "user_id": new_comment.user_id,
+        "user_name": current_user.name,
+        "action": new_comment.action,
+        "message": new_comment.message,
+        "created_at": new_comment.created_at,
+    }
+
+
+@router.get("/{inspection_id}/comments", response_model=List[schemas.InspectionCommentResponse])
+def get_comments(
+    inspection_id: int,
+    db: Session = Depends(get_db),
+):
+    comments = (
+        db.query(InspectionComment)
+        .filter(InspectionComment.inspection_id == inspection_id)
+        .order_by(InspectionComment.created_at.asc())
+        .all()
+    )
+    return [
+        {
+            "id": c.id,
+            "user_id": c.user_id,
+            "user_name": c.user.name,
+            "action": c.action,
+            "message": c.message,
+            "created_at": c.created_at,
+        }
+        for c in comments
+    ]
+
+@router.post("/{inspection_id}/comments", response_model=schemas.InspectionCommentResponse)
+def add_comment(
+    inspection_id: int,
+    comment: schemas.InspectionCommentCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    new_comment = InspectionComment(
+        inspection_id=inspection_id,
+        user_id=current_user.id,
+        action=comment.action,
+        message=comment.message,
+    )
+
+    db.add(new_comment)
+    db.commit()
+    db.refresh(new_comment)
+
+    return {
+        "id": new_comment.id,
+        "user_id": new_comment.user_id,
+        "user_name": current_user.name,
+        "action": new_comment.action,
+        "message": new_comment.message,
+        "created_at": new_comment.created_at,
+    }
+
+
+@router.get("/{inspection_id}/comments", response_model=List[schemas.InspectionCommentResponse])
+def get_comments(
+    inspection_id: int,
+    db: Session = Depends(get_db),
+):
+    comments = (
+        db.query(InspectionComment)
+        .filter(InspectionComment.inspection_id == inspection_id)
+        .order_by(InspectionComment.created_at.asc())
+        .all()
+    )
+    return [
+        {
+            "id": c.id,
+            "user_id": c.user_id,
+            "user_name": c.user.name,
+            "action": c.action,
+            "message": c.message,
+            "created_at": c.created_at,
+        }
+        for c in comments
+    ]
+
+@router.get("/{inspection_id}/report")
+def generate_inspection_report(inspection_id: int, db: Session = Depends(get_db)):
+    inspection = db.query(Inspection).filter(Inspection.id == inspection_id).first()
+    if not inspection:
+        raise HTTPException(status_code=404, detail="Inspection not found")
+
+    comments = inspection.comments or []
+    items = inspection.items or []
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+
+    story.append(Paragraph(f"<b>Inspection Report #{inspection.id}</b>", styles["Title"]))
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"Template: {inspection.template.name}", styles["Normal"]))
+    story.append(Paragraph(f"Location: {inspection.location}", styles["Normal"]))
+    story.append(Paragraph(f"Assigned to: {inspection.assigned_to.name}", styles["Normal"]))
+    story.append(Paragraph(f"Status: {inspection.status}", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("<b>Checklist Items</b>", styles["Heading2"]))
+    data = [["Item", "Checked", "Notes"]]
+    for item in items:
+        data.append([
+            item.description,
+            "✅" if item.checked else "❌",
+            item.notes or ""
+        ])
+
+    table = Table(data, colWidths=[250, 60, 200])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ('ALIGN', (1, 1), (-1, -1), 'CENTER')
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 12))
+
+    # Add photos (if any)
+    story.append(Paragraph("<b>Photos</b>", styles["Heading2"]))
+    for item in items:
+        if item.photo_url:
+            try:
+                # Download image temporarily
+                response = requests.get(item.photo_url)
+                if response.status_code == 200:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmpfile:
+                        tmpfile.write(response.content)
+                        tmpfile.flush()
+                        story.append(Paragraph(item.description, styles["Normal"]))
+                        story.append(Image(tmpfile.name, width=150, height=100))
+                        story.append(Spacer(1, 8))
+            except Exception:
+                story.append(Paragraph("(Could not load photo)", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    # Comments section
+    story.append(Paragraph("<b>Comments & Approval History</b>", styles["Heading2"]))
+    for c in comments:
+        story.append(Paragraph(
+            f"<b>{c.user.name}</b> ({c.action}) [{c.created_at.strftime('%Y-%m-%d %H:%M:%S')}]<br/>{c.message}",
+            styles["Normal"]
+        ))
+        story.append(Spacer(1, 8))
+
+    # Sign-off
+    if inspection.status == "Approved":
+        story.append(Spacer(1, 24))
+        story.append(Paragraph("<b>Approved by Lead Engineer:</b>", styles["Heading2"]))
+        story.append(Paragraph(f"{inspection.assigned_by.name} on {inspection.completed_at.strftime('%Y-%m-%d %H:%M:%S')}", styles["Normal"]))
+
+    doc.build(story)
+    buffer.seek(0)
+
+    return StreamingResponse(buffer, media_type="application/pdf", headers={
+        "Content-Disposition": f"attachment; filename=inspection_{inspection.id}_report.pdf"
+    })

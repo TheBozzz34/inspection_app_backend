@@ -100,3 +100,19 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     user_id: Optional[int] = None
     role: Optional[Role] = None
+
+class InspectionCommentBase(BaseModel):
+    action: str
+    message: str
+
+class InspectionCommentCreate(InspectionCommentBase):
+    pass
+
+class InspectionCommentResponse(InspectionCommentBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    user_name: str
+
+    class Config:
+        orm_mode = True

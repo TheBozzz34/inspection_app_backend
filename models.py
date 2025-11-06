@@ -60,6 +60,8 @@ class Inspection(Base):
     assignee = relationship("User", foreign_keys=[assigned_to], lazy="joined")
     assigner = relationship("User", foreign_keys=[assigned_by], lazy="joined")
 
+    comments = relationship("InspectionComment", back_populates="inspection", cascade="all, delete-orphan")
+
 class InspectionItem(Base):
     __tablename__ = "inspection_items"
     id = Column(Integer, primary_key=True, index=True)
@@ -70,3 +72,16 @@ class InspectionItem(Base):
     photo_url = Column(String, nullable=True)
 
     inspection = relationship("Inspection", back_populates="items")
+
+class InspectionComment(Base):
+    __tablename__ = "inspection_comments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    inspection_id = Column(Integer, ForeignKey("inspections.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    action = Column(String, nullable=False)  # e.g., 'Comment', 'Approve', 'Recheck'
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    inspection = relationship("Inspection", back_populates="comments")
