@@ -3,6 +3,7 @@ from . import models
 from .database import engine
 from .routers import users, templates, inspections
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -19,3 +20,5 @@ app.add_middleware(
 app.include_router(users.router)
 app.include_router(templates.router)
 app.include_router(inspections.router)
+
+app.mount("/static/photos", StaticFiles(directory="uploaded_photos"), name="photos")
